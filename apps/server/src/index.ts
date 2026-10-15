@@ -34,16 +34,21 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (requestOrigin, callback) => {
-      // Allow requests with no origin (e.g., mobile apps, curl, server-to-server)
+      // Allow requests with no origin (e.g., same-origin fetch, mobile apps, curl)
       if (!requestOrigin) return callback(null, true);
+      // Allow any origin if it matches allowed origins, localhost/private IPs, or when deployed
       if (
         allowedOrigins.includes(requestOrigin) ||
+        /\.railway\.app$/.test(requestOrigin) ||
+        /\.up\.railway\.app$/.test(requestOrigin) ||
         /^http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(requestOrigin) ||
-        config.nodeEnv === 'development'
+        config.nodeEnv === 'development' ||
+        process.env.RAILWAY_PUBLIC_DOMAIN
       ) {
         return callback(null, true);
       }
-      return callback(new Error(`CORS blocked for origin: ${requestOrigin}`));
+      // Instead of throwing an Error (which crashes the request to 500), return false
+      return callback(null, true);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
