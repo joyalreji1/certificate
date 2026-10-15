@@ -323,3 +323,77 @@ a:hover {
   margin: 0 auto;
   padding: 2rem 1.5rem;
 }
+
+/* ========================================================
+   Mobile & Responsive Enhancements
+   ======================================================== */
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+
+  h1 {
+    font-size: 1.85rem !important;
+  }
+
+  h2 {
+    font-size: 1.45rem !important;
+  }
+
+  h3 {
+    font-size: 1.15rem !important;
+  }
+
+  .app-container {
+    padding: 1.25rem 1rem !important;
+  }
+
+  .card {
+    padding: 1.25rem !important;
+  }
+
+  /* Stepper mobile horizontal scroll */
+  .stepper {
+    padding: 0.6rem 1rem !important;
+    gap: 1rem !important;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .step-item {
+    font-size: 0.78rem !important;
+  }
+
+  /* Form & inputs on mobile */
+  .form-input, .form-select {
+    font-size: 16px !important; /* Prevents auto-zoom on iOS Safari */
+  }
+
+  /* Two column grids collapse to 1 column */
+  .responsive-grid-2 {
+    grid-template-columns: 1fr !important;
+    gap: 1.25rem !important;
+  }
+
+  .responsive-stack-mobile {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 1rem !important;
+  }
+
+  .responsive-hide-mobile {
+    display: none !important;
+  }
+
+  /* Buttons on mobile */
+  .btn-mobile-full {
+    width: 100% !important;
+  }
+
+  /* Table responsive wrap */
+  .table th, .table td {
+    padding: 0.5rem 0.65rem !important;
+    font-size: 0.8rem !important;
+  }
+}
+

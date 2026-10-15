@@ -179,7 +179,7 @@ export const Upload: React.FC = () => {
         </div>
 
         {/* Two Upload / Selection Dropzones */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.75rem', marginBottom: '2rem' }}>
+        <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.75rem', marginBottom: '2rem' }}>
           {/* 1. Certificate Template Support: Upload OR Select Existing */}
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>

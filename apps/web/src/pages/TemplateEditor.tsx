@@ -682,8 +682,27 @@ export const TemplateEditor: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Workspace (Editor Canvas on Left + Properties on Right) */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      {/* Main Workspace (Editor Canvas on Left + Properties on Right, stacked on mobile) */}
+      <div className="template-editor-workspace" style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <style>{`
+          @media (max-width: 900px) {
+            .template-editor-workspace {
+              flex-direction: column !important;
+              overflow-y: auto !important;
+            }
+            .template-editor-sidebar {
+              width: 100% !important;
+              border-left: none !important;
+              border-top: 1px solid var(--border) !important;
+            }
+            .template-editor-toolbar {
+              flex-wrap: wrap !important;
+              height: auto !important;
+              padding: 0.75rem 1rem !important;
+              gap: 0.75rem !important;
+            }
+          }
+        `}</style>
         {/* Left: Canvas Viewport */}
         <div
           ref={containerRef}
@@ -862,6 +881,7 @@ export const TemplateEditor: React.FC = () => {
 
         {/* Right: Properties Inspector Panel */}
         <aside
+          className="template-editor-sidebar"
           style={{
             width: '320px',
             backgroundColor: 'var(--surface)',
