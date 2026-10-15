@@ -1,0 +1,923 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { useBatchStore } from '../store/batchStore';
+import { Stepper } from '../components/Stepper';
+import { OverlayField, StandardFieldKeys } from '@bulk-cert/shared';
+import {
+  ZoomIn,
+  ZoomOut,
+  Grid,
+  Undo2,
+  Redo2,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  Save
+} from 'lucide-react';
+
+// Configure pdfjs worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+const DEFAULT_FONTS = [
+  'Playfair Display',
+  'Cormorant Garamond',
+  'EB Garamond',
+  'Inter',
+  'Helvetica',
+  'Times New Roman',
+  'Great Vibes',
+  'Courier'
+];
+
+export const TemplateEditor: React.FC = () => {
+  const {
+    currentBatch,
+    template,
+    spreadsheet,
+    mappings,
+    overlayFields,
+    setOverlayFields,
+    createOrUpdateBatch
+  } = useBatchStore();
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  const [zoom, setZoom] = useState<number>(1.0); // 1.0 = 100%
+  const [scale, setScale] = useState<number>(1.0); // pixels per PDF point
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [showGrid, setShowGrid] = useState<boolean>(false);
+  const [currentRowIndex, setCurrentRowIndex] = useState<number>(2); // 1-indexed spreadsheet line (data row 1 is line 2)
+  const [history, setHistory] = useState<OverlayField[][]>([]);
+  const [historyIdx, setHistoryIdx] = useState<number>(-1);
+  const [draggingFieldId, setDraggingFieldId] = useState<string | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; fieldX: number; fieldY: number } | null>(null);
+  const [resizing, setResizing] = useState<{ handle: string; initialW: number; initialH: number; initialX: number; initialY: number; mouseX: number; mouseY: number } | null>(null);
+  const [presetSavedNotice, setPresetSavedNotice] = useState(false);
+
+  // Initialize overlay fields if none exist
+  useEffect(() => {
+    if (!template) return;
+    const pWidth = template.pageSizePoints.width || 842;
+    const pHeight = template.pageSizePoints.height || 595;
+
+    if (overlayFields.length === 0 && mappings.length > 0) {
+      const initialFields: OverlayField[] = [];
+      const mappedOnly = mappings.filter((m) => m.spreadsheetColumn);
+
+      mappedOnly.forEach((m, idx) => {
+        const isName = m.fieldKey === StandardFieldKeys.STUDENT_NAME;
+        const isProgram = m.fieldKey === StandardFieldKeys.PROGRAM_CATEGORY;
+        const isDate = m.fieldKey === StandardFieldKeys.DATE;
+
+        let yPos = 200 + idx * 60;
+        let fontSize = 18;
+        let fontFamily = 'Inter';
+        let fontWeight: 'normal' | 'bold' | 'italic' = 'normal';
+
+        if (isName) {
+          yPos = pHeight * 0.42;
+          fontSize = 32;
+          fontFamily = 'Playfair Display';
+          fontWeight = 'bold';
+        } else if (isProgram) {
+          yPos = pHeight * 0.56;
+          fontSize = 20;
+          fontFamily = 'Inter';
+        } else if (isDate) {
+          yPos = pHeight * 0.78;
+          fontSize = 14;
+        }
+
+        initialFields.push({
+          id: `field_${m.fieldKey}_${Date.now()}_${idx}`,
+          key: m.fieldKey,
+          label: m.label,
+          x: Math.round((pWidth - (isName ? 500 : 400)) / 2),
+          y: Math.round(yPos),
+          width: isName ? 500 : 400,
+          height: isName ? 55 : 40,
+          fontFamily,
+          fontSize,
+          fontWeight,
+          fontColorHex: isName ? '#141414' : '#54504A',
+          align: 'center',
+          verticalAnchor: 'middle',
+          wrap: isProgram,
+          lineSpacing: 1.2,
+          letterSpacing: 0,
+          autoShrink: true,
+          minFontSize: isName ? 14 : 10
+        });
+      });
+
+      setOverlayFields(initialFields);
+      setSelectedFieldId(initialFields[0]?.id || null);
+      setHistory([initialFields]);
+      setHistoryIdx(0);
+    }
+  }, [template, mappings]);
+
+  // Load and render PDF using pdf.js
+  useEffect(() => {
+    if (!template?.id) return;
+    let isCancelled = false;
+
+    const renderPdf = async () => {
+      try {
+        const loadingTask = pdfjsLib.getDocument({
+          url: `/api/templates/${template.id}/file`,
+          withCredentials: true
+        });
+        const doc = await loadingTask.promise;
+        const page = await doc.getPage(currentBatch?.selectedPage || 1);
+        if (isCancelled) return;
+
+        const viewport = page.getViewport({ scale: zoom });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const context = canvas.getContext('2d');
+        if (!context) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        setScale(viewport.width / (template.pageSizePoints.width || 842));
+
+        const renderContext = {
+          canvasContext: context,
+          viewport: viewport
+        };
+        await page.render(renderContext).promise;
+      } catch (err) {
+        console.error('Failed to render PDF in editor', err);
+      }
+    };
+
+    renderPdf();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [template?.id, zoom, currentBatch?.selectedPage]);
+
+  // Update history for undo/redo
+  const pushHistory = (newFields: OverlayField[]) => {
+    const updated = history.slice(0, historyIdx + 1);
+    updated.push(newFields);
+    setHistory(updated);
+    setHistoryIdx(updated.length - 1);
+    setOverlayFields(newFields);
+  };
+
+  const handleUndo = () => {
+    if (historyIdx > 0) {
+      setHistoryIdx(historyIdx - 1);
+      setOverlayFields(history[historyIdx - 1]);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIdx < history.length - 1) {
+      setHistoryIdx(historyIdx + 1);
+      setOverlayFields(history[historyIdx + 1]);
+    }
+  };
+
+  // Keyboard nudging: arrows = 1pt, Shift+arrows = 10pt
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!selectedFieldId) return;
+      // Do not nudge if an input or select is focused
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+        return;
+      }
+
+      const step = e.shiftKey ? 10 : 1;
+      let dx = 0;
+      let dy = 0;
+
+      if (e.key === 'ArrowLeft') dx = -step;
+      else if (e.key === 'ArrowRight') dx = step;
+      else if (e.key === 'ArrowUp') dy = -step;
+      else if (e.key === 'ArrowDown') dy = step;
+      else return;
+
+      e.preventDefault();
+      const updated = overlayFields.map((f) => {
+        if (f.id === selectedFieldId) {
+          return {
+            ...f,
+            x: Math.max(0, Math.round(f.x + dx)),
+            y: Math.max(0, Math.round(f.y + dy))
+          };
+        }
+        return f;
+      });
+      pushHistory(updated);
+    },
+    [selectedFieldId, overlayFields, history, historyIdx]
+  );
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Active selected field
+  const selectedField = overlayFields.find((f) => f.id === selectedFieldId) || overlayFields[0];
+
+  const updateSelectedField = (updates: Partial<OverlayField>) => {
+    if (!selectedField) return;
+    const updated = overlayFields.map((f) => (f.id === selectedField.id ? { ...f, ...updates } : f));
+    pushHistory(updated);
+  };
+
+  // Mouse drag handling
+  const handleMouseDown = (e: React.MouseEvent, fieldId: string) => {
+    e.stopPropagation();
+    setSelectedFieldId(fieldId);
+    const field = overlayFields.find((f) => f.id === fieldId);
+    if (!field) return;
+
+    setDraggingFieldId(fieldId);
+    setDragStart({
+      x: e.clientX,
+      y: e.clientY,
+      fieldX: field.x,
+      fieldY: field.y
+    });
+  };
+
+  const handleResizeStart = (e: React.MouseEvent, handle: string, field: OverlayField) => {
+    e.stopPropagation();
+    setResizing({
+      handle,
+      initialW: field.width,
+      initialH: field.height,
+      initialX: field.x,
+      initialY: field.y,
+      mouseX: e.clientX,
+      mouseY: e.clientY
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (draggingFieldId && dragStart) {
+      const deltaX = (e.clientX - dragStart.x) / scale;
+      const deltaY = (e.clientY - dragStart.y) / scale;
+
+      const updated = overlayFields.map((f) => {
+        if (f.id === draggingFieldId) {
+          return {
+            ...f,
+            x: Math.max(0, Math.round(dragStart.fieldX + deltaX)),
+            y: Math.max(0, Math.round(dragStart.fieldY + deltaY))
+          };
+        }
+        return f;
+      });
+      setOverlayFields(updated);
+    } else if (resizing && selectedField) {
+      const deltaX = (e.clientX - resizing.mouseX) / scale;
+      const deltaY = (e.clientY - resizing.mouseY) / scale;
+      let newW = resizing.initialW;
+      let newH = resizing.initialH;
+      let newX = resizing.initialX;
+      let newY = resizing.initialY;
+
+      if (resizing.handle.includes('e')) newW = Math.max(40, Math.round(resizing.initialW + deltaX));
+      if (resizing.handle.includes('s')) newH = Math.max(20, Math.round(resizing.initialH + deltaY));
+      if (resizing.handle.includes('w')) {
+        const potentialW = Math.max(40, Math.round(resizing.initialW - deltaX));
+        newX = resizing.initialX + (resizing.initialW - potentialW);
+        newW = potentialW;
+      }
+      if (resizing.handle.includes('n')) {
+        const potentialH = Math.max(20, Math.round(resizing.initialH - deltaY));
+        newY = resizing.initialY + (resizing.initialH - potentialH);
+        newH = potentialH;
+      }
+
+      const updated = overlayFields.map((f) => (f.id === selectedField.id ? { ...f, width: newW, height: newH, x: newX, y: newY } : f));
+      setOverlayFields(updated);
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (draggingFieldId || resizing) {
+      setDraggingFieldId(null);
+      setDragStart(null);
+      setResizing(null);
+      pushHistory(overlayFields);
+    }
+  };
+
+  // Sample data row preview resolution
+  const previewRows = spreadsheet?.previewRows || [];
+  const activeRowData = previewRows[(currentRowIndex - 2) % (previewRows.length || 1)] || {};
+
+  const getSampleTextForField = (field: OverlayField): string => {
+    const mapping = mappings.find((m) => m.fieldKey === field.key);
+    if (mapping?.spreadsheetColumn && activeRowData[mapping.spreadsheetColumn]) {
+      return activeRowData[mapping.spreadsheetColumn];
+    }
+    return `[${field.label}]`;
+  };
+
+  // Save current preset
+  const handleSavePreset = () => {
+    localStorage.setItem(`preset_${template?.id}`, JSON.stringify(overlayFields));
+    setPresetSavedNotice(true);
+    setTimeout(() => setPresetSavedNotice(false), 2500);
+  };
+
+  const handleLoadPreset = () => {
+    const saved = localStorage.getItem(`preset_${template?.id}`);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      pushHistory(parsed);
+    } else {
+      alert('No saved preset found for this template.');
+    }
+  };
+
+  const handleProceedToPreview = async () => {
+    if (currentBatch?.id) {
+      await createOrUpdateBatch(currentBatch.name);
+    }
+    navigate('/preview');
+  };
+
+  return (
+    <div onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Stepper currentStep={3} />
+
+      {/* Editor Control Toolbar */}
+      <div style={{
+        backgroundColor: 'var(--surface)',
+        borderBottom: '1px solid var(--border)',
+        padding: '0.65rem 1.5rem',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '1rem'
+      }}>
+        {/* Left: Zoom, Undo, Redo, Grid */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+            <button
+              onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.15) * 100) / 100))}
+              className="btn btn-quiet"
+              style={{ padding: '0.35rem 0.5rem' }}
+              title="Zoom Out"
+            >
+              <ZoomOut size={16} />
+            </button>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, padding: '0 0.5rem', minWidth: '48px', textAlign: 'center' }}>
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              onClick={() => setZoom((z) => Math.min(2.0, Math.round((z + 0.15) * 100) / 100))}
+              className="btn btn-quiet"
+              style={{ padding: '0.35rem 0.5rem' }}
+              title="Zoom In"
+            >
+              <ZoomIn size={16} />
+            </button>
+          </div>
+
+          <button
+            onClick={() => setZoom(1.0)}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+          >
+            Fit 100%
+          </button>
+
+          <button
+            onClick={() => setShowGrid(!showGrid)}
+            className={`btn ${showGrid ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+            title="Toggle alignment grid"
+          >
+            <Grid size={14} />
+            <span>Grid</span>
+          </button>
+
+          <div style={{ display: 'flex', gap: '0.25rem', borderLeft: '1px solid var(--border)', paddingLeft: '0.75rem' }}>
+            <button
+              onClick={handleUndo}
+              disabled={historyIdx <= 0}
+              className="btn btn-quiet"
+              style={{ padding: '0.35rem 0.5rem' }}
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 size={16} />
+            </button>
+            <button
+              onClick={handleRedo}
+              disabled={historyIdx >= history.length - 1}
+              className="btn btn-quiet"
+              style={{ padding: '0.35rem 0.5rem' }}
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo2 size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Center: Row Selector for Real-Time Testing */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-2)' }}>Sample Row:</span>
+          <button
+            onClick={() => setCurrentRowIndex((r) => Math.max(2, r - 1))}
+            className="btn btn-secondary"
+            style={{ padding: '0.25rem 0.4rem' }}
+            title="Previous Row"
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '60px', textAlign: 'center' }}>
+            Row {currentRowIndex}
+          </span>
+          <button
+            onClick={() => setCurrentRowIndex((r) => r + 1)}
+            className="btn btn-secondary"
+            style={{ padding: '0.25rem 0.4rem' }}
+            title="Next Row"
+          >
+            <ChevronRight size={15} />
+          </button>
+
+          <button
+            onClick={() => setCurrentRowIndex(111)} // Seeded long name row
+            className="btn btn-quiet"
+            style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--gold)' }}
+          >
+            <Sparkles size={13} style={{ marginRight: '0.25rem' }} />
+            Test Longest Name
+          </button>
+        </div>
+
+        {/* Right: Presets & Proceed */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <button
+            onClick={handleSavePreset}
+            className="btn btn-secondary"
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
+          >
+            <Save size={13} />
+            <span>Save Preset</span>
+          </button>
+          <button
+            onClick={handleLoadPreset}
+            className="btn btn-quiet"
+            style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+          >
+            Load Preset
+          </button>
+          {presetSavedNotice && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>Preset Saved!</span>
+          )}
+
+          <button
+            onClick={handleProceedToPreview}
+            className="btn btn-primary"
+            style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+          >
+            <span>Preview Sample</span>
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Main Workspace (Editor Canvas on Left + Properties on Right) */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Left: Canvas Viewport */}
+        <div
+          ref={containerRef}
+          style={{
+            flex: 1,
+            backgroundColor: '#EAE3D6',
+            overflow: 'auto',
+            padding: '2.5rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative'
+          }}
+        >
+          {/* Certificate Page Artboard */}
+          <div
+            style={{
+              position: 'relative',
+              boxShadow: '0 8px 30px rgba(0, 0, 0, 0.15)',
+              backgroundColor: '#fff',
+              lineHeight: 0,
+              userSelect: 'none'
+            }}
+          >
+            {/* The True PDF Render Canvas */}
+            <canvas ref={canvasRef} style={{ display: 'block' }} />
+
+            {/* Subtle Alignment Grid */}
+            {showGrid && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  backgroundImage: `linear-gradient(to right, rgba(179, 138, 74, 0.15) 1px, transparent 1px),
+                                    linear-gradient(to bottom, rgba(179, 138, 74, 0.15) 1px, transparent 1px)`,
+                  backgroundSize: `${20 * scale}px ${20 * scale}px`,
+                  pointerEvents: 'none'
+                }}
+              />
+            )}
+
+            {/* Draggable & Resizable Overlay Boxes */}
+            {overlayFields.map((field) => {
+              const isSelected = field.id === selectedFieldId;
+              const sampleText = getSampleTextForField(field);
+
+              // Calculate screen coordinates from points
+              const leftPx = field.x * scale;
+              const topPx = field.y * scale;
+              const widthPx = field.width * scale;
+              const heightPx = field.height * scale;
+
+              return (
+                <div
+                  key={field.id}
+                  onMouseDown={(e) => handleMouseDown(e, field.id)}
+                  style={{
+                    position: 'absolute',
+                    left: leftPx,
+                    top: topPx,
+                    width: widthPx,
+                    height: heightPx,
+                    border: isSelected ? '1.5px solid var(--gold)' : '1px dashed rgba(20, 20, 20, 0.3)',
+                    backgroundColor: isSelected ? 'rgba(179, 138, 74, 0.08)' : 'rgba(255, 255, 255, 0.05)',
+                    cursor: draggingFieldId === field.id ? 'grabbing' : 'grab',
+                    display: 'flex',
+                    alignItems:
+                      field.verticalAnchor === 'middle'
+                        ? 'center'
+                        : field.verticalAnchor === 'bottom'
+                        ? 'flex-end'
+                        : 'flex-start',
+                    justifyContent:
+                      field.align === 'center'
+                        ? 'center'
+                        : field.align === 'right'
+                        ? 'flex-end'
+                        : 'flex-start',
+                    padding: '2px 4px',
+                    boxSizing: 'border-box',
+                    overflow: 'hidden',
+                    lineHeight: 1.2
+                  }}
+                >
+                  {/* Field Label Badge on hover/selection */}
+                  {isSelected && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: -20,
+                        left: 0,
+                        backgroundColor: 'var(--ink)',
+                        color: 'var(--gold)',
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                        padding: '1px 5px',
+                        borderRadius: '2px',
+                        whiteSpace: 'nowrap',
+                        pointerEvents: 'none'
+                      }}
+                    >
+                      {field.label} ({field.width} × {field.height} pt)
+                    </div>
+                  )}
+
+                  {/* Sample Text Rendered in True Point Scale */}
+                  <div
+                    style={{
+                      fontFamily: field.fontFamily,
+                      fontSize: `${field.fontSize * scale}px`,
+                      fontWeight: field.fontWeight === 'bold' ? 700 : 400,
+                      fontStyle: field.fontWeight === 'italic' ? 'italic' : 'normal',
+                      color: field.fontColorHex,
+                      textAlign: field.align,
+                      whiteSpace: field.wrap ? 'normal' : 'nowrap',
+                      width: '100%',
+                      pointerEvents: 'none',
+                      userSelect: 'none'
+                    }}
+                  >
+                    {sampleText}
+                  </div>
+
+                  {/* Resize Handles (Only for selected field) */}
+                  {isSelected && (
+                    <>
+                      <div
+                        onMouseDown={(e) => handleResizeStart(e, 'se', field)}
+                        style={{
+                          position: 'absolute',
+                          right: -4,
+                          bottom: -4,
+                          width: 8,
+                          height: 8,
+                          backgroundColor: 'var(--gold)',
+                          border: '1px solid #fff',
+                          cursor: 'se-resize'
+                        }}
+                      />
+                      <div
+                        onMouseDown={(e) => handleResizeStart(e, 'e', field)}
+                        style={{
+                          position: 'absolute',
+                          right: -4,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          width: 8,
+                          height: 8,
+                          backgroundColor: 'var(--gold)',
+                          border: '1px solid #fff',
+                          cursor: 'e-resize'
+                        }}
+                      />
+                      <div
+                        onMouseDown={(e) => handleResizeStart(e, 's', field)}
+                        style={{
+                          position: 'absolute',
+                          bottom: -4,
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          width: 8,
+                          height: 8,
+                          backgroundColor: 'var(--gold)',
+                          border: '1px solid #fff',
+                          cursor: 's-resize'
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right: Properties Inspector Panel */}
+        <aside
+          style={{
+            width: '320px',
+            backgroundColor: 'var(--surface)',
+            borderLeft: '1px solid var(--border)',
+            padding: '1.5rem',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1.25rem'
+          }}
+        >
+          <div>
+            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--gold)', letterSpacing: '0.08em', fontWeight: 600 }}>
+              Field Inspector
+            </span>
+            <h3 style={{ fontSize: '1.2rem', marginTop: '0.2rem' }}>
+              {selectedField ? selectedField.label : 'Select a field'}
+            </h3>
+          </div>
+
+          {selectedField ? (
+            <>
+              {/* Typography Controls */}
+              <div>
+                <label className="form-label">Font Family</label>
+                <select
+                  className="form-select"
+                  style={{ width: '100%', marginTop: '0.25rem' }}
+                  value={selectedField.fontFamily}
+                  onChange={(e) => updateSelectedField({ fontFamily: e.target.value })}
+                >
+                  {DEFAULT_FONTS.map((font) => (
+                    <option key={font} value={font}>
+                      {font}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Font Size & Weight */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label className="form-label">Size (pt)</label>
+                  <input
+                    type="number"
+                    min={8}
+                    max={120}
+                    className="form-input"
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                    value={selectedField.fontSize}
+                    onChange={(e) => updateSelectedField({ fontSize: Number(e.target.value) })}
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Style / Weight</label>
+                  <select
+                    className="form-select"
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                    value={selectedField.fontWeight}
+                    onChange={(e) => updateSelectedField({ fontWeight: e.target.value as any })}
+                  >
+                    <option value="normal">Regular</option>
+                    <option value="bold">Bold</option>
+                    <option value="italic">Italic</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Text Color */}
+              <div>
+                <label className="form-label">Color</label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.25rem' }}>
+                  <input
+                    type="color"
+                    value={selectedField.fontColorHex}
+                    onChange={(e) => updateSelectedField({ fontColorHex: e.target.value })}
+                    style={{
+                      width: '36px',
+                      height: '36px',
+                      padding: 0,
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-sm)',
+                      cursor: 'pointer'
+                    }}
+                  />
+                  <input
+                    type="text"
+                    value={selectedField.fontColorHex}
+                    onChange={(e) => updateSelectedField({ fontColorHex: e.target.value })}
+                    className="form-input"
+                    style={{ flex: 1, fontFamily: 'monospace' }}
+                  />
+                </div>
+              </div>
+
+              {/* Alignment */}
+              <div>
+                <label className="form-label">Horizontal Alignment</label>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <button
+                    onClick={() => updateSelectedField({ align: 'left' })}
+                    className={`btn ${selectedField.align === 'left' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.4rem' }}
+                  >
+                    <AlignLeft size={16} />
+                  </button>
+                  <button
+                    onClick={() => updateSelectedField({ align: 'center' })}
+                    className={`btn ${selectedField.align === 'center' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.4rem' }}
+                  >
+                    <AlignCenter size={16} />
+                  </button>
+                  <button
+                    onClick={() => updateSelectedField({ align: 'right' })}
+                    className={`btn ${selectedField.align === 'right' ? 'btn-primary' : 'btn-secondary'}`}
+                    style={{ flex: 1, padding: '0.4rem' }}
+                  >
+                    <AlignRight size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Vertical Anchor */}
+              <div>
+                <label className="form-label">Vertical Anchor</label>
+                <select
+                  className="form-select"
+                  style={{ width: '100%', marginTop: '0.25rem' }}
+                  value={selectedField.verticalAnchor}
+                  onChange={(e) => updateSelectedField({ verticalAnchor: e.target.value as any })}
+                >
+                  <option value="top">Top</option>
+                  <option value="middle">Middle (Center)</option>
+                  <option value="bottom">Bottom</option>
+                </select>
+              </div>
+
+              {/* Exact Coordinate Inputs in PDF Points */}
+              <div>
+                <label className="form-label">Coordinates in PDF Points (pt)</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-2)' }}>X (from left):</span>
+                    <input
+                      type="number"
+                      value={selectedField.x}
+                      onChange={(e) => updateSelectedField({ x: Number(e.target.value) })}
+                      className="form-input"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-2)' }}>Y (from top):</span>
+                    <input
+                      type="number"
+                      value={selectedField.y}
+                      onChange={(e) => updateSelectedField({ y: Number(e.target.value) })}
+                      className="form-input"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-2)' }}>Width:</span>
+                    <input
+                      type="number"
+                      value={selectedField.width}
+                      onChange={(e) => updateSelectedField({ width: Number(e.target.value) })}
+                      className="form-input"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-2)' }}>Height:</span>
+                    <input
+                      type="number"
+                      value={selectedField.height}
+                      onChange={(e) => updateSelectedField({ height: Number(e.target.value) })}
+                      className="form-input"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Auto-Shrink & Wrapping */}
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <label htmlFor="autoShrink" className="form-label" style={{ margin: 0 }}>
+                    Auto-Shrink to Fit
+                  </label>
+                  <input
+                    id="autoShrink"
+                    type="checkbox"
+                    checked={selectedField.autoShrink}
+                    onChange={(e) => updateSelectedField({ autoShrink: e.target.checked })}
+                  />
+                </div>
+
+                {selectedField.autoShrink && (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label className="form-label">Minimum Font Size (pt)</label>
+                    <input
+                      type="number"
+                      min={6}
+                      max={selectedField.fontSize}
+                      className="form-input"
+                      style={{ width: '100%', marginTop: '0.25rem' }}
+                      value={selectedField.minFontSize}
+                      onChange={(e) => updateSelectedField({ minFontSize: Number(e.target.value) })}
+                    />
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label htmlFor="wrapToggle" className="form-label" style={{ margin: 0 }}>
+                    Enable Word Wrapping
+                  </label>
+                  <input
+                    id="wrapToggle"
+                    type="checkbox"
+                    checked={selectedField.wrap}
+                    onChange={(e) => updateSelectedField({ wrap: e.target.checked })}
+                  />
+                </div>
+              </div>
+
+              {/* Nudge Instruction */}
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-2)', backgroundColor: 'var(--surface-alt)', padding: '0.65rem', borderRadius: 'var(--radius-sm)' }}>
+                💡 <strong>Tip:</strong> Use keyboard arrow keys to nudge the field by 1pt (or Shift+arrow for 10pt).
+              </div>
+            </>
+          ) : (
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-2)' }}>
+              Click on an overlay box on the certificate to inspect its styling.
+            </p>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+};
