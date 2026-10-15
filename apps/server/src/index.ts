@@ -86,13 +86,16 @@ app.get('/api/health', (_req: Request, res: Response) => {
 const webDistCandidates = [
   path.resolve(__dirname, '../../web/dist'),
   path.resolve(__dirname, '../web/dist'),
-  path.resolve(process.cwd(), 'apps/web/dist')
+  path.resolve(__dirname, 'web/dist'),
+  path.resolve(process.cwd(), 'apps/web/dist'),
+  path.resolve(process.cwd(), 'web/dist')
 ];
 
 let webDistDir = '';
 for (const candidate of webDistCandidates) {
   if (fs.existsSync(candidate) && fs.existsSync(path.join(candidate, 'index.html'))) {
     webDistDir = candidate;
+    console.log(`[Static] Serving web UI from: ${webDistDir}`);
     break;
   }
 }
@@ -102,6 +105,21 @@ if (webDistDir) {
   app.get('*', (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(webDistDir, 'index.html'));
+  });
+} else {
+  console.warn('[Static] Warning: web/dist directory was not found. API routes are active, but web UI static files are missing.');
+  app.get('/', (_req: Request, res: Response) => {
+    res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Bulk Certificate Generator - API Active</title></head>
+        <body style="font-family:sans-serif;text-align:center;padding:50px;">
+          <h2>Bulk Certificate Generator Backend is Online</h2>
+          <p>API status: <a href="/api/health">/api/health</a></p>
+          <p>Note: The frontend UI bundle has not been built or static path not located. Run <code>npm run build</code> to generate the UI.</p>
+        </body>
+      </html>
+    `);
   });
 }
 
