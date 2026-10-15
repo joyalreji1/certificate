@@ -339,39 +339,61 @@ export const TemplateEditor: React.FC = () => {
     setSelectedFieldId(updated[0]?.id || null);
   };
 
-  // Mouse drag handling
-  const handleMouseDown = (e: React.MouseEvent, fieldId: string) => {
-    e.stopPropagation();
+  // Mouse & Touch drag handling
+  const handleStartDrag = (clientX: number, clientY: number, fieldId: string) => {
     setSelectedFieldId(fieldId);
     const field = overlayFields.find((f) => f.id === fieldId);
     if (!field) return;
 
     setDraggingFieldId(fieldId);
     setDragStart({
-      x: e.clientX,
-      y: e.clientY,
+      x: clientX,
+      y: clientY,
       fieldX: field.x,
       fieldY: field.y
     });
   };
 
-  const handleResizeStart = (e: React.MouseEvent, handle: string, field: OverlayField) => {
+  const handleMouseDown = (e: React.MouseEvent, fieldId: string) => {
     e.stopPropagation();
+    handleStartDrag(e.clientX, e.clientY, fieldId);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, fieldId: string) => {
+    e.stopPropagation();
+    if (e.touches[0]) {
+      handleStartDrag(e.touches[0].clientX, e.touches[0].clientY, fieldId);
+    }
+  };
+
+  const handleStartResize = (clientX: number, clientY: number, handle: string, field: OverlayField) => {
     setResizing({
       handle,
       initialW: field.width,
       initialH: field.height,
       initialX: field.x,
       initialY: field.y,
-      mouseX: e.clientX,
-      mouseY: e.clientY
+      mouseX: clientX,
+      mouseY: clientY
     });
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleResizeStart = (e: React.MouseEvent, handle: string, field: OverlayField) => {
+    e.stopPropagation();
+    handleStartResize(e.clientX, e.clientY, handle, field);
+  };
+
+  const handleResizeTouchStart = (e: React.TouchEvent, handle: string, field: OverlayField) => {
+    e.stopPropagation();
+    if (e.touches[0]) {
+      handleStartResize(e.touches[0].clientX, e.touches[0].clientY, handle, field);
+    }
+  };
+
+  const processMove = (clientX: number, clientY: number) => {
     if (draggingFieldId && dragStart) {
-      const deltaX = (e.clientX - dragStart.x) / scale;
-      const deltaY = (e.clientY - dragStart.y) / scale;
+      const deltaX = (clientX - dragStart.x) / scale;
+      const deltaY = (clientY - dragStart.y) / scale;
 
       const updated = overlayFields.map((f) => {
         if (f.id === draggingFieldId) {
@@ -385,8 +407,8 @@ export const TemplateEditor: React.FC = () => {
       });
       setOverlayFields(updated);
     } else if (resizing && selectedField) {
-      const deltaX = (e.clientX - resizing.mouseX) / scale;
-      const deltaY = (e.clientY - resizing.mouseY) / scale;
+      const deltaX = (clientX - resizing.mouseX) / scale;
+      const deltaY = (clientY - resizing.mouseY) / scale;
       let newW = resizing.initialW;
       let newH = resizing.initialH;
       let newX = resizing.initialX;
@@ -410,6 +432,18 @@ export const TemplateEditor: React.FC = () => {
     }
   };
 
+  const handleMouseMove = (e: React.MouseEvent) => {
+    processMove(e.clientX, e.clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (draggingFieldId || resizing) {
+      if (e.touches[0]) {
+        processMove(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }
+  };
+
   const handleMouseUp = () => {
     if (draggingFieldId || resizing) {
       setDraggingFieldId(null);
@@ -417,6 +451,10 @@ export const TemplateEditor: React.FC = () => {
       setResizing(null);
       pushHistory(overlayFields);
     }
+  };
+
+  const handleTouchEnd = () => {
+    handleMouseUp();
   };
 
   // Sample data row preview resolution
@@ -493,7 +531,13 @@ export const TemplateEditor: React.FC = () => {
   };
 
   return (
-    <div onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}
+    >
       <Stepper currentStep={3} />
 
       {/* Editor Control Toolbar */}
@@ -759,6 +803,7 @@ export const TemplateEditor: React.FC = () => {
                 <div
                   key={field.id}
                   onMouseDown={(e) => handleMouseDown(e, field.id)}
+                  onTouchStart={(e) => handleTouchStart(e, field.id)}
                   style={{
                     position: 'absolute',
                     left: leftPx,
@@ -768,6 +813,7 @@ export const TemplateEditor: React.FC = () => {
                     border: isSelected ? '2px solid var(--gold)' : '1px dashed rgba(20, 20, 20, 0.35)',
                     backgroundColor: isSelected ? 'rgba(179, 138, 74, 0.1)' : 'rgba(255, 255, 255, 0.05)',
                     cursor: draggingFieldId === field.id ? 'grabbing' : 'grab',
+                    touchAction: 'none',
                     display: 'flex',
                     alignItems:
                       field.verticalAnchor === 'middle'
@@ -832,43 +878,52 @@ export const TemplateEditor: React.FC = () => {
                     <>
                       <div
                         onMouseDown={(e) => handleResizeStart(e, 'se', field)}
+                        onTouchStart={(e) => handleResizeTouchStart(e, 'se', field)}
                         style={{
                           position: 'absolute',
-                          right: -4,
-                          bottom: -4,
-                          width: 8,
-                          height: 8,
+                          right: -6,
+                          bottom: -6,
+                          width: 14,
+                          height: 14,
                           backgroundColor: 'var(--gold)',
-                          border: '1px solid #fff',
-                          cursor: 'se-resize'
+                          border: '2px solid #fff',
+                          borderRadius: '2px',
+                          cursor: 'se-resize',
+                          touchAction: 'none'
                         }}
                       />
                       <div
                         onMouseDown={(e) => handleResizeStart(e, 'e', field)}
+                        onTouchStart={(e) => handleResizeTouchStart(e, 'e', field)}
                         style={{
                           position: 'absolute',
-                          right: -4,
+                          right: -6,
                           top: '50%',
                           transform: 'translateY(-50%)',
-                          width: 8,
-                          height: 8,
+                          width: 14,
+                          height: 14,
                           backgroundColor: 'var(--gold)',
-                          border: '1px solid #fff',
-                          cursor: 'e-resize'
+                          border: '2px solid #fff',
+                          borderRadius: '2px',
+                          cursor: 'e-resize',
+                          touchAction: 'none'
                         }}
                       />
                       <div
                         onMouseDown={(e) => handleResizeStart(e, 's', field)}
+                        onTouchStart={(e) => handleResizeTouchStart(e, 's', field)}
                         style={{
                           position: 'absolute',
-                          bottom: -4,
+                          bottom: -6,
                           left: '50%',
                           transform: 'translateX(-50%)',
-                          width: 8,
-                          height: 8,
+                          width: 14,
+                          height: 14,
                           backgroundColor: 'var(--gold)',
-                          border: '1px solid #fff',
-                          cursor: 's-resize'
+                          border: '2px solid #fff',
+                          borderRadius: '2px',
+                          cursor: 's-resize',
+                          touchAction: 'none'
                         }}
                       />
                     </>

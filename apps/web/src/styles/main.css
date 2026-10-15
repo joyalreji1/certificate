@@ -73,6 +73,8 @@ a:hover {
   padding: 0.6rem 1.25rem;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: all var(--transition-fast);
   text-decoration: none;
   border: 1px solid transparent;
