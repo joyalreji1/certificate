@@ -84,18 +84,18 @@ export const Login: React.FC = () => {
                   value={loginName}
                   onChange={(e) => setLoginName(e.target.value)}
                   className="form-input"
-                  style={{ width: '100%', paddingLeft: '2.3rem' }}
+                  style={{ width: '100%', paddingLeft: '2.5rem', touchAction: 'manipulation' }}
                   placeholder="name@example.com"
-                  disabled={isLoading}
                 />
                 <Mail
                   size={16}
                   style={{
                     position: 'absolute',
-                    left: '0.75rem',
+                    left: '0.85rem',
                     top: '50%',
                     transform: 'translateY(-50%)',
-                    color: 'var(--text-2)'
+                    color: 'var(--text-2)',
+                    pointerEvents: 'none'
                   }}
                 />
               </div>
@@ -114,18 +114,18 @@ export const Login: React.FC = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="form-input"
-                  style={{ width: '100%', paddingLeft: '2.3rem', paddingRight: '2.5rem' }}
+                  style={{ width: '100%', paddingLeft: '2.5rem', paddingRight: '2.75rem', touchAction: 'manipulation' }}
                   placeholder="••••••••••••"
-                  disabled={isLoading}
                 />
                 <Lock
                   size={16}
                   style={{
                     position: 'absolute',
-                    left: '0.75rem',
+                    left: '0.85rem',
                     top: '50%',
                     transform: 'translateY(-50%)',
-                    color: 'var(--text-2)'
+                    color: 'var(--text-2)',
+                    pointerEvents: 'none'
                   }}
                 />
                 <button
@@ -143,7 +143,8 @@ export const Login: React.FC = () => {
                     color: 'var(--text-2)',
                     display: 'flex',
                     alignItems: 'center',
-                    padding: '0.2rem'
+                    padding: '0.4rem',
+                    touchAction: 'manipulation'
                   }}
                 >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
