@@ -22,7 +22,7 @@ export class ValidationService {
       {
         fieldKey: StandardFieldKeys.PROGRAM_CATEGORY,
         label: 'Program / Category',
-        isRequired: true,
+        isRequired: false, // Only student names are strictly required unless a program column is mapped
         spreadsheetColumn: null,
         transform: 'none'
       },
@@ -82,7 +82,10 @@ export class ValidationService {
         const idx = lowerHeaders.findIndex((h) =>
           h.includes('program') || h.includes('category') || h.includes('course') || h.includes('track') || h.includes('event')
         );
-        if (idx !== -1) mapping.spreadsheetColumn = headers[idx];
+        if (idx !== -1) {
+          mapping.spreadsheetColumn = headers[idx];
+          mapping.isRequired = true;
+        }
       } else if (mapping.fieldKey === StandardFieldKeys.INSTITUTION) {
         const idx = lowerHeaders.findIndex((h) =>
           h.includes('college') || h.includes('institution') || h.includes('school') || h.includes('university') || h.includes('org')
@@ -125,11 +128,21 @@ export class ValidationService {
   static validateRows(
     rows: Record<string, string>[],
     mappings: FieldMapping[],
-    excludedRowIndices: number[] = []
+    excludedRowIndicesOrOptions: number[] | { globalProgramName?: string } = [],
+    options?: { globalProgramName?: string }
   ): RowValidationSummary {
+    let excludedRowIndices: number[] = [];
+    let opts = options;
+    if (Array.isArray(excludedRowIndicesOrOptions)) {
+      excludedRowIndices = excludedRowIndicesOrOptions;
+    } else if (excludedRowIndicesOrOptions && typeof excludedRowIndicesOrOptions === 'object') {
+      opts = excludedRowIndicesOrOptions;
+    }
+
     const errors: RowValidationError[] = [];
     const duplicates: DuplicateRecord[] = [];
     const excludedSet = new Set(excludedRowIndices);
+    const hasGlobalProgram = !!(opts?.globalProgramName && opts.globalProgramName.trim());
 
     const nameMapping = mappings.find((m) => m.fieldKey === StandardFieldKeys.STUDENT_NAME);
     const programMapping = mappings.find((m) => m.fieldKey === StandardFieldKeys.PROGRAM_CATEGORY);
@@ -153,6 +166,11 @@ export class ValidationService {
 
       // 1. Check required fields and whitespace
       for (const mapping of mappings) {
+        if (mapping.fieldKey === StandardFieldKeys.PROGRAM_CATEGORY && hasGlobalProgram) {
+          // Program is satisfied by the batch-wide global program setting
+          continue;
+        }
+
         if (!mapping.spreadsheetColumn) {
           if (mapping.isRequired) {
             rowHasFatalError = true;
@@ -247,7 +265,11 @@ export class ValidationService {
 
       // 3. Same Name + Program duplicate check
       const studentName = nameMapping?.spreadsheetColumn ? (row[nameMapping.spreadsheetColumn] || '').trim().toLowerCase() : '';
-      const programName = programMapping?.spreadsheetColumn ? (row[programMapping.spreadsheetColumn] || '').trim().toLowerCase() : '';
+      const programName = hasGlobalProgram
+        ? opts!.globalProgramName!.trim().toLowerCase()
+        : programMapping?.spreadsheetColumn
+        ? (row[programMapping.spreadsheetColumn] || '').trim().toLowerCase()
+        : '';
 
       if (studentName && programName) {
         const nameProgramHash = `${studentName}:::${programName}`;
@@ -259,10 +281,11 @@ export class ValidationService {
               duplicateOf: originalRow,
               type: 'name_program'
             });
+            const progDisplay = hasGlobalProgram ? opts!.globalProgramName!.trim() : row[programMapping!.spreadsheetColumn!];
             errors.push({
               rowIndex: sourceRowIndex,
-              column: `${nameMapping?.label} + ${programMapping?.label}`,
-              value: `${row[nameMapping!.spreadsheetColumn!]} (${row[programMapping!.spreadsheetColumn!]})`,
+              column: `${nameMapping?.label} + ${programMapping?.label || 'Program'}`,
+              value: `${row[nameMapping!.spreadsheetColumn!]} (${progDisplay})`,
               code: 'DUPLICATE_NAME_PROGRAM',
               message: `Same student and program as Row ${originalRow}.`,
               severity: 'warning'

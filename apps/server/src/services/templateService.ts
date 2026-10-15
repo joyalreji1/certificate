@@ -80,6 +80,8 @@ export class TemplateService {
       rotation,
       embeddedFonts,
       isEncrypted: false,
+      overlayFields: [],
+      selectedPage: 1,
       createdAt: nowIso
     };
 
@@ -87,8 +89,8 @@ export class TemplateService {
       INSERT INTO templates (
         id, user_id, filename, file_size, file_path, page_count,
         page_width_pts, page_height_pts, page_width_mm, page_height_mm,
-        rotation, embedded_fonts, is_encrypted, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        rotation, embedded_fonts, is_encrypted, overlay_fields, selected_page, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       templateInfo.id,
       templateInfo.userId,
@@ -103,6 +105,8 @@ export class TemplateService {
       templateInfo.rotation,
       JSON.stringify(templateInfo.embeddedFonts),
       0,
+      JSON.stringify([]),
+      1,
       templateInfo.createdAt
     );
 
@@ -134,7 +138,56 @@ export class TemplateService {
       rotation: row.rotation,
       embeddedFonts: JSON.parse(row.embedded_fonts || '[]'),
       isEncrypted: row.is_encrypted === 1,
+      overlayFields: JSON.parse(row.overlay_fields || '[]'),
+      selectedPage: row.selected_page || 1,
       createdAt: row.created_at
     };
+  }
+
+  static listTemplates(userId: string): TemplateInfo[] {
+    const rows = db.prepare(`
+      SELECT * FROM templates WHERE user_id = ? ORDER BY created_at DESC
+    `).all(userId) as any[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      filename: row.filename,
+      fileSize: row.file_size,
+      filePath: row.file_path,
+      pageCount: row.page_count,
+      pageSizePoints: {
+        width: row.page_width_pts,
+        height: row.page_height_pts
+      },
+      pageSizeMm: {
+        width: row.page_width_mm,
+        height: row.page_height_mm
+      },
+      rotation: row.rotation,
+      embeddedFonts: JSON.parse(row.embedded_fonts || '[]'),
+      isEncrypted: row.is_encrypted === 1,
+      overlayFields: JSON.parse(row.overlay_fields || '[]'),
+      selectedPage: row.selected_page || 1,
+      createdAt: row.created_at
+    }));
+  }
+
+  static saveTemplatePreset(
+    id: string,
+    userId: string,
+    overlayFields: any[],
+    selectedPage: number = 1
+  ): TemplateInfo | null {
+    const existing = this.getTemplate(id, userId);
+    if (!existing) return null;
+
+    db.prepare(`
+      UPDATE templates
+      SET overlay_fields = ?, selected_page = ?
+      WHERE id = ? AND user_id = ?
+    `).run(JSON.stringify(overlayFields), selectedPage, id, userId);
+
+    return this.getTemplate(id, userId);
   }
 }

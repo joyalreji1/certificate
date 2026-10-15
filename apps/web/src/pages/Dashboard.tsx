@@ -8,7 +8,7 @@ import { Plus, Clock, FileText, Trash2, Shield, CloudOff } from 'lucide-react';
 export const Dashboard: React.FC = () => {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loading, setLoading] = useState(true);
-  const { resetBatch } = useBatchStore();
+  const { resetBatch, loadBatch } = useBatchStore();
   const navigate = useNavigate();
 
   const fetchBatches = async () => {
@@ -47,6 +47,23 @@ export const Dashboard: React.FC = () => {
     const hours = Math.floor(msRemaining / (1000 * 60 * 60));
     const mins = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
     return `${hours}h ${mins}m remaining`;
+  };
+
+  const handleOpenBatch = async (batch: Batch) => {
+    try {
+      await loadBatch(batch.id);
+      if (batch.status === 'completed') {
+        navigate('/results');
+      } else if (batch.status === 'processing') {
+        navigate('/progress');
+      } else if (batch.templateId && batch.overlayFields && batch.overlayFields.length > 0) {
+        navigate('/editor');
+      } else {
+        navigate('/mapping');
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to open batch.');
+    }
   };
 
   return (
@@ -204,7 +221,15 @@ export const Dashboard: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'inline-flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <button
+                          onClick={() => handleOpenBatch(batch)}
+                          className="btn btn-secondary"
+                          style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}
+                        >
+                          {batch.status === 'completed' ? 'View Results' :
+                           batch.status === 'processing' ? 'View Progress' : 'Open'}
+                        </button>
                         <button
                           onClick={() => handleDeleteBatch(batch.id)}
                           className="btn btn-quiet"

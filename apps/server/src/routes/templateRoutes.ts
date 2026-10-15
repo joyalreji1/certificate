@@ -45,6 +45,11 @@ templateRouter.post('/upload', authMiddleware, upload.single('template'), async 
   }
 });
 
+templateRouter.get('/', authMiddleware, (req: Request, res: Response) => {
+  const templates = TemplateService.listTemplates(req.user!.id);
+  res.json({ templates });
+});
+
 templateRouter.get('/:id', authMiddleware, (req: Request, res: Response) => {
   const template = TemplateService.getTemplate(req.params.id as string, req.user!.id);
   if (!template) {
@@ -52,6 +57,40 @@ templateRouter.get('/:id', authMiddleware, (req: Request, res: Response) => {
     return;
   }
   res.json({ template });
+});
+
+templateRouter.post('/:id/preset', authMiddleware, (req: Request, res: Response) => {
+  const { overlayFields, selectedPage = 1 } = req.body || {};
+  if (!Array.isArray(overlayFields)) {
+    res.status(400).json({ error: 'overlayFields must be an array.' });
+    return;
+  }
+
+  const updated = TemplateService.saveTemplatePreset(
+    req.params.id as string,
+    req.user!.id,
+    overlayFields,
+    Number(selectedPage) || 1
+  );
+
+  if (!updated) {
+    res.status(404).json({ error: 'Template not found.' });
+    return;
+  }
+
+  res.json({ template: updated, message: 'Template preset saved successfully.' });
+});
+
+templateRouter.get('/:id/preset', authMiddleware, (req: Request, res: Response) => {
+  const template = TemplateService.getTemplate(req.params.id as string, req.user!.id);
+  if (!template) {
+    res.status(404).json({ error: 'Template not found.' });
+    return;
+  }
+  res.json({
+    overlayFields: template.overlayFields || [],
+    selectedPage: template.selectedPage || 1
+  });
 });
 
 templateRouter.get('/:id/file', authMiddleware, (req: Request, res: Response) => {

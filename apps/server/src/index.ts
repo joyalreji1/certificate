@@ -62,8 +62,15 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+import { driveRouter } from './routes/driveRoutes';
+
 // Mount API routes
 app.use('/api/auth', authRouter);
+app.use('/api/auth/google/callback', (req: Request, res: Response) => {
+  const queryStr = new URLSearchParams(req.query as any).toString();
+  res.redirect(`/api/drive/callback${queryStr ? '?' + queryStr : ''}`);
+});
+app.use('/api/drive', driveRouter);
 app.use('/api/templates', templateRouter);
 app.use('/api/spreadsheets', spreadsheetRouter);
 app.use('/api/batches', batchRouter);

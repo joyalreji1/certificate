@@ -44,6 +44,8 @@ export interface TemplateInfo {
   rotation: number;
   embeddedFonts: string[];
   isEncrypted: boolean;
+  overlayFields?: OverlayField[];
+  selectedPage?: number;
   createdAt: string;
 }
 
@@ -139,6 +141,7 @@ export interface Batch {
   id: string;
   userId: string;
   name: string;
+  programName?: string;
   templateId: string;
   spreadsheetId: string;
   activeSheet: string;
@@ -146,6 +149,7 @@ export interface Batch {
   fieldMappings: FieldMapping[];
   overlayFields: OverlayField[];
   excludedRows: number[];
+  nameOverrides?: Record<number, string>;
   status: 'draft' | 'configured' | 'processing' | 'completed' | 'failed' | 'paused';
   createdAt: string;
   updatedAt: string;

@@ -10,9 +10,10 @@ fs.mkdirSync(config.jobsDir, { recursive: true });
 
 export const db = new DatabaseSync(config.dbPath);
 
-// Enable WAL mode for concurrent performance and foreign keys
+// Enable WAL mode for concurrent performance, foreign keys, and busy timeout
 db.exec('PRAGMA journal_mode = WAL;');
 db.exec('PRAGMA foreign_keys = ON;');
+db.exec('PRAGMA busy_timeout = 10000;');
 
 export function initDatabase() {
   db.exec(`
@@ -60,6 +61,8 @@ export function initDatabase() {
       rotation INTEGER NOT NULL,
       embedded_fonts TEXT NOT NULL,
       is_encrypted INTEGER NOT NULL,
+      overlay_fields TEXT DEFAULT '[]',
+      selected_page INTEGER DEFAULT 1,
       created_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
@@ -84,6 +87,7 @@ export function initDatabase() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       name TEXT NOT NULL,
+      program_name TEXT DEFAULT '',
       template_id TEXT,
       spreadsheet_id TEXT,
       active_sheet TEXT,
@@ -120,11 +124,36 @@ export function initDatabase() {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS google_drive_tokens (
+      user_id TEXT PRIMARY KEY,
+      encrypted_access_token TEXT NOT NULL,
+      encrypted_refresh_token TEXT,
+      token_expiry TEXT,
+      account_email TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup ON login_attempts(identifier, ip_address, timestamp);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_batches_user_id ON batches(user_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_batch_id ON jobs(batch_id);
   `);
+
+  // Migrations for existing databases
+  try {
+    db.exec(`ALTER TABLE templates ADD COLUMN overlay_fields TEXT DEFAULT '[]';`);
+  } catch {}
+  try {
+    db.exec(`ALTER TABLE templates ADD COLUMN selected_page INTEGER DEFAULT 1;`);
+  } catch {}
+  try {
+    db.exec(`ALTER TABLE batches ADD COLUMN program_name TEXT DEFAULT '';`);
+  } catch {}
+  try {
+    db.exec(`ALTER TABLE batches ADD COLUMN name_overrides TEXT DEFAULT '{}';`);
+  } catch {}
 }
 
 // Initialize tables on import

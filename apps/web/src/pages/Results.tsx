@@ -12,7 +12,11 @@ import {
   PlusCircle,
   Home,
   ShieldCheck,
-  FileDown
+  FileDown,
+  Cloud,
+  CloudOff,
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 
 interface RowExecutionResult {
@@ -37,6 +41,18 @@ interface JobRecord {
   rowResults: RowExecutionResult[];
 }
 
+interface DriveStatus {
+  connected: boolean;
+  configured: boolean;
+  accountEmail?: string;
+}
+
+interface DriveUploadResult {
+  folderId?: string;
+  folderUrl?: string;
+  uploads: Array<{ target: string; fileId: string; webViewLink: string; name: string }>;
+}
+
 export const Results: React.FC = () => {
   const { currentBatch, resetBatch } = useBatchStore();
   const navigate = useNavigate();
@@ -45,13 +61,19 @@ export const Results: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Drive state
+  const [driveStatus, setDriveStatus] = useState<DriveStatus>({ connected: false, configured: false });
+  const [uploadingDrive, setUploadingDrive] = useState<boolean>(false);
+  const [driveSuccess, setDriveSuccess] = useState<DriveUploadResult | null>(null);
+  const [driveError, setDriveError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!currentBatch?.id) {
       navigate('/');
       return;
     }
 
-    const fetchJob = async () => {
+    const fetchJobAndDrive = async () => {
       try {
         const res = await apiRequest<{ job: JobRecord }>(`/api/batches/${currentBatch.id}/job`);
         setJob(res.job);
@@ -60,9 +82,17 @@ export const Results: React.FC = () => {
       } finally {
         setLoading(false);
       }
+
+      // Check Drive status
+      try {
+        const dRes = await apiRequest<DriveStatus>('/api/drive/status');
+        setDriveStatus(dRes);
+      } catch {
+        // Drive status check failure is non-fatal
+      }
     };
 
-    fetchJob();
+    fetchJobAndDrive();
   }, [currentBatch?.id]);
 
   const handleDownloadZip = () => {
@@ -80,6 +110,32 @@ export const Results: React.FC = () => {
     window.location.href = `/api/batches/${currentBatch.id}/download/failures-csv`;
   };
 
+  const handleDriveUpload = async () => {
+    if (!currentBatch?.id || uploadingDrive) return;
+    setDriveError(null);
+    setDriveSuccess(null);
+
+    if (!driveStatus.connected) {
+      setDriveError(
+        'Google Drive is not connected. Operating in Download-First mode. You can connect your Google account in Settings, or download files locally using the buttons below.'
+      );
+      return;
+    }
+
+    setUploadingDrive(true);
+    try {
+      const res = await apiRequest<DriveUploadResult>(`/api/batches/${currentBatch.id}/upload-drive`, {
+        method: 'POST',
+        body: JSON.stringify({ target: 'all' })
+      });
+      setDriveSuccess(res);
+    } catch (err: any) {
+      setDriveError(err.message || 'Google Drive upload failed.');
+    } finally {
+      setUploadingDrive(false);
+    }
+  };
+
   const handleStartNewBatch = () => {
     resetBatch();
     navigate('/upload');
@@ -91,7 +147,7 @@ export const Results: React.FC = () => {
     <div>
       <Stepper currentStep={5} />
 
-      <div className="app-container" style={{ maxWidth: '1050px' }}>
+      <div className="app-container" style={{ maxWidth: '1080px' }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '1.75rem' }}>
           <div>
@@ -120,6 +176,7 @@ export const Results: React.FC = () => {
 
         {loading ? (
           <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
+            <RefreshCw size={28} className="spin" style={{ color: 'var(--gold)', margin: '0 auto 0.75rem auto' }} />
             <p style={{ fontFamily: 'var(--font-serif)', fontSize: '1.2rem', color: 'var(--text-2)' }}>
               Finalizing generation results...
             </p>
@@ -135,7 +192,7 @@ export const Results: React.FC = () => {
                 borderLeft: `4px solid ${failedItems.length > 0 ? 'var(--gold)' : 'var(--success)'}`
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <div
                     style={{
@@ -184,9 +241,9 @@ export const Results: React.FC = () => {
               </div>
             </div>
 
-            {/* Primary Download Cards */}
-            <h2 style={{ fontSize: '1.3rem', marginBottom: '1rem' }}>Download Artifacts</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '2.5rem' }}>
+            {/* Primary Download & Archival Cards */}
+            <h2 style={{ fontSize: '1.3rem', marginBottom: '1rem' }}>Download & Archival Artifacts</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem', marginBottom: '2.5rem' }}>
               {/* ZIP Archive Card */}
               <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
@@ -229,6 +286,41 @@ export const Results: React.FC = () => {
                 </button>
               </div>
 
+              {/* Google Drive Upload Card */}
+              <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.85rem' }}>
+                    <Cloud size={22} color="var(--gold)" />
+                    <h3 style={{ fontSize: '1.1rem', margin: 0 }}>Google Drive</h3>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-2)', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+                    {driveStatus.connected
+                      ? `Upload batch directly to Google Drive as "${driveStatus.accountEmail}".`
+                      : 'Download-first: Google Drive is optional. Connect in Settings or download locally.'}
+                  </p>
+                </div>
+                {driveStatus.connected ? (
+                  <button
+                    onClick={handleDriveUpload}
+                    disabled={uploadingDrive || !job || job.succeededRows === 0}
+                    className="btn btn-secondary"
+                    style={{ width: '100%', justifyContent: 'center' }}
+                  >
+                    <Cloud size={16} />
+                    <span>{uploadingDrive ? 'Uploading to Drive...' : 'Upload to Google Drive'}</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => navigate('/settings')}
+                    className="btn btn-quiet"
+                    style={{ width: '100%', justifyContent: 'center', fontSize: '0.85rem', border: '1px solid var(--border)' }}
+                  >
+                    <CloudOff size={15} style={{ marginRight: '0.35rem' }} />
+                    <span>Drive Not Connected (Settings)</span>
+                  </button>
+                )}
+              </div>
+
               {/* Error Report Card */}
               <div className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
@@ -252,6 +344,70 @@ export const Results: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Google Drive Upload Feedback Banner */}
+            {driveSuccess && (
+              <div className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderLeft: '4px solid var(--success)', backgroundColor: 'var(--success-bg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                  <CheckCircle2 size={20} style={{ color: 'var(--success)' }} />
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--ink)' }}>
+                    Artifacts Successfully Uploaded to Google Drive
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--ink)', marginBottom: '0.75rem' }}>
+                  A dedicated folder was created on Google Drive with your batch certificates:
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  {driveSuccess.folderUrl && (
+                    <a
+                      href={driveSuccess.folderUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-primary"
+                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
+                    >
+                      <ExternalLink size={14} /> Open Drive Folder
+                    </a>
+                  )}
+                  {driveSuccess.uploads.map((u, i) => (
+                    <a
+                      key={i}
+                      href={u.webViewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
+                    >
+                      <ExternalLink size={14} /> View {u.name}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {driveError && (
+              <div className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderLeft: '4px solid var(--gold)', backgroundColor: 'var(--surface-alt)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+                  <CloudOff size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: '2px' }} />
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: '0.95rem', display: 'block', marginBottom: '0.25rem' }}>
+                      Google Drive Status Notice
+                    </span>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-2)', margin: '0 0 0.75rem 0' }}>
+                      {driveError}
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button onClick={() => navigate('/settings')} className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}>
+                        Go to Settings
+                      </button>
+                      <button onClick={handleDownloadZip} className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.35rem 0.65rem' }}>
+                        Download ZIP Locally
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Failure Inspection Table (if any) */}
             {failedItems.length > 0 && (

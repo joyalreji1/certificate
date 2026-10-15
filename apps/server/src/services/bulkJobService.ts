@@ -237,16 +237,23 @@ export class BulkJobService {
 
     // Helper to process one row safely
     const processRow = async (item: { spreadsheetLine: number; data: Record<string, string> }) => {
-      const rawName = item.data[nameCol] || item.data['student_name'] || item.data['name'] || `Student_${item.spreadsheetLine}`;
+      const overrideName = batch.nameOverrides?.[item.spreadsheetLine];
+      const rawName = overrideName || item.data[nameCol] || item.data['student_name'] || item.data['name'] || `Student_${item.spreadsheetLine}`;
       const studentName = rawName.trim();
+
+      const effectiveRowData = { ...item.data };
+      if (overrideName && nameCol) {
+        effectiveRowData[nameCol] = overrideName;
+      }
 
       try {
         const genResult = await PdfGenerationService.generateSingleCertificate({
           templateFilePath,
           selectedPage: batch.selectedPage || 1,
-          rowData: item.data,
+          rowData: effectiveRowData,
           fieldMappings: batch.fieldMappings,
-          overlayFields: batch.overlayFields
+          overlayFields: batch.overlayFields,
+          globalProgramName: batch.programName
         });
 
         // 1. Append to ZIP archive

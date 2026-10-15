@@ -9,6 +9,7 @@ export interface SingleCertificateOptions {
   rowData: Record<string, string>;
   fieldMappings: FieldMapping[];
   overlayFields: OverlayField[];
+  globalProgramName?: string;
 }
 
 export interface GenerationResult {
@@ -139,7 +140,7 @@ export class PdfGenerationService {
    * Generates a single personalized PDF certificate with precise overlay positioning
    */
   static async generateSingleCertificate(options: SingleCertificateOptions): Promise<GenerationResult> {
-    const { templateFilePath, selectedPage = 1, rowData, fieldMappings, overlayFields } = options;
+    const { templateFilePath, selectedPage = 1, rowData, fieldMappings, overlayFields, globalProgramName } = options;
 
     if (!fs.existsSync(templateFilePath)) {
       throw new Error(`Template file not found at: ${templateFilePath}`);
@@ -166,7 +167,14 @@ export class PdfGenerationService {
       const mapping = fieldMappings.find((m) => m.fieldKey === field.key);
       let rawValue = '';
 
-      if (mapping?.spreadsheetColumn) {
+      const isProgramField =
+        field.key === StandardFieldKeys.PROGRAM_CATEGORY ||
+        field.key?.toLowerCase().includes('program') ||
+        field.label?.toLowerCase().includes('program');
+
+      if (isProgramField && globalProgramName && globalProgramName.trim()) {
+        rawValue = globalProgramName.trim();
+      } else if (mapping?.spreadsheetColumn) {
         if (!(mapping.spreadsheetColumn in rowData)) {
           warnings.push(`Mapped column "${mapping.spreadsheetColumn}" for field "${field.label}" was not found in spreadsheet.`);
         } else {

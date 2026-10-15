@@ -9,6 +9,7 @@ import { ValidationService } from '../services/validationService';
 import { TemplateService } from '../services/templateService';
 import { PdfGenerationService } from '../services/pdfGenerationService';
 import { BulkJobService } from '../services/bulkJobService';
+import { GoogleDriveService } from '../services/googleDriveService';
 import { config } from '../config';
 import { Batch, FieldMapping, OverlayField } from '@bulk-cert/shared';
 
@@ -26,6 +27,7 @@ batchRouter.get('/', authMiddleware, (req: Request, res: Response) => {
     id: r.id,
     userId: r.user_id,
     name: r.name,
+    programName: r.program_name || '',
     templateId: r.template_id,
     spreadsheetId: r.spreadsheet_id,
     activeSheet: r.active_sheet,
@@ -33,6 +35,7 @@ batchRouter.get('/', authMiddleware, (req: Request, res: Response) => {
     fieldMappings: JSON.parse(r.field_mappings || '[]'),
     overlayFields: JSON.parse(r.overlay_fields || '[]'),
     excludedRows: JSON.parse(r.excluded_rows || '[]'),
+    nameOverrides: JSON.parse(r.name_overrides || '{}'),
     status: r.status,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -43,7 +46,7 @@ batchRouter.get('/', authMiddleware, (req: Request, res: Response) => {
 });
 
 batchRouter.post('/', authMiddleware, (req: Request, res: Response) => {
-  const { name, templateId, spreadsheetId, activeSheet, selectedPage, fieldMappings, overlayFields, excludedRows } = req.body || {};
+  const { name, programName, templateId, spreadsheetId, activeSheet, selectedPage, fieldMappings, overlayFields, excludedRows, nameOverrides } = req.body || {};
 
   if (!name || typeof name !== 'string') {
     res.status(400).json({ error: 'Batch name is required.' });
@@ -59,6 +62,7 @@ batchRouter.post('/', authMiddleware, (req: Request, res: Response) => {
     id,
     userId: req.user!.id,
     name: name.trim(),
+    programName: (programName || '').trim(),
     templateId: templateId || '',
     spreadsheetId: spreadsheetId || '',
     activeSheet: activeSheet || '',
@@ -66,6 +70,7 @@ batchRouter.post('/', authMiddleware, (req: Request, res: Response) => {
     fieldMappings: fieldMappings || [],
     overlayFields: overlayFields || [],
     excludedRows: excludedRows || [],
+    nameOverrides: nameOverrides || {},
     status: 'draft',
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -74,22 +79,24 @@ batchRouter.post('/', authMiddleware, (req: Request, res: Response) => {
 
   db.prepare(`
     INSERT INTO batches (
-      id, user_id, name, template_id, spreadsheet_id, active_sheet,
-      selected_page, field_mappings, overlay_fields, excluded_rows,
+      id, user_id, name, program_name, template_id, spreadsheet_id, active_sheet,
+      selected_page, field_mappings, overlay_fields, excluded_rows, name_overrides,
       status, created_at, updated_at, expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     batch.id,
     batch.userId,
     batch.name,
-    batch.templateId,
-    batch.spreadsheetId,
-    batch.activeSheet,
-    batch.selectedPage,
-    JSON.stringify(batch.fieldMappings),
-    JSON.stringify(batch.overlayFields),
-    JSON.stringify(batch.excludedRows),
-    batch.status,
+    batch.programName || '',
+    batch.templateId || null,
+    batch.spreadsheetId || null,
+    batch.activeSheet || null,
+    batch.selectedPage || 1,
+    JSON.stringify(batch.fieldMappings || []),
+    JSON.stringify(batch.overlayFields || []),
+    JSON.stringify(batch.excludedRows || []),
+    JSON.stringify(batch.nameOverrides || {}),
+    batch.status || 'draft',
     batch.createdAt,
     batch.updatedAt,
     batch.expiresAt
@@ -113,6 +120,7 @@ batchRouter.get('/:id', authMiddleware, (req: Request, res: Response) => {
     id: row.id,
     userId: row.user_id,
     name: row.name,
+    programName: row.program_name || '',
     templateId: row.template_id,
     spreadsheetId: row.spreadsheet_id,
     activeSheet: row.active_sheet,
@@ -120,6 +128,7 @@ batchRouter.get('/:id', authMiddleware, (req: Request, res: Response) => {
     fieldMappings: JSON.parse(row.field_mappings || '[]'),
     overlayFields: JSON.parse(row.overlay_fields || '[]'),
     excludedRows: JSON.parse(row.excluded_rows || '[]'),
+    nameOverrides: JSON.parse(row.name_overrides || '{}'),
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -137,12 +146,13 @@ batchRouter.put('/:id', authMiddleware, (req: Request, res: Response) => {
     return;
   }
 
-  const { name, templateId, spreadsheetId, activeSheet, selectedPage, fieldMappings, overlayFields, excludedRows, status } = req.body || {};
+  const { name, programName, templateId, spreadsheetId, activeSheet, selectedPage, fieldMappings, overlayFields, excludedRows, nameOverrides, status } = req.body || {};
   const nowIso = new Date().toISOString();
 
   db.prepare(`
     UPDATE batches
     SET name = COALESCE(?, name),
+        program_name = COALESCE(?, program_name),
         template_id = COALESCE(?, template_id),
         spreadsheet_id = COALESCE(?, spreadsheet_id),
         active_sheet = COALESCE(?, active_sheet),
@@ -150,19 +160,22 @@ batchRouter.put('/:id', authMiddleware, (req: Request, res: Response) => {
         field_mappings = COALESCE(?, field_mappings),
         overlay_fields = COALESCE(?, overlay_fields),
         excluded_rows = COALESCE(?, excluded_rows),
+        name_overrides = COALESCE(?, name_overrides),
         status = COALESCE(?, status),
         updated_at = ?
     WHERE id = ? AND user_id = ?
   `).run(
-    name,
-    templateId,
-    spreadsheetId,
-    activeSheet,
-    selectedPage,
-    fieldMappings ? JSON.stringify(fieldMappings) : null,
-    overlayFields ? JSON.stringify(overlayFields) : null,
-    excludedRows ? JSON.stringify(excludedRows) : null,
-    status,
+    name !== undefined ? name : null,
+    programName !== undefined ? programName.trim() : null,
+    templateId !== undefined ? templateId : null,
+    spreadsheetId !== undefined ? spreadsheetId : null,
+    activeSheet !== undefined ? activeSheet : null,
+    selectedPage !== undefined ? Number(selectedPage) : null,
+    fieldMappings !== undefined ? JSON.stringify(fieldMappings) : null,
+    overlayFields !== undefined ? JSON.stringify(overlayFields) : null,
+    excludedRows !== undefined ? JSON.stringify(excludedRows) : null,
+    nameOverrides !== undefined ? JSON.stringify(nameOverrides) : null,
+    status !== undefined ? status : null,
     nowIso,
     batchId,
     req.user!.id
@@ -173,6 +186,7 @@ batchRouter.put('/:id', authMiddleware, (req: Request, res: Response) => {
     id: updated.id,
     userId: updated.user_id,
     name: updated.name,
+    programName: updated.program_name || '',
     templateId: updated.template_id,
     spreadsheetId: updated.spreadsheet_id,
     activeSheet: updated.active_sheet,
@@ -180,6 +194,7 @@ batchRouter.put('/:id', authMiddleware, (req: Request, res: Response) => {
     fieldMappings: JSON.parse(updated.field_mappings || '[]'),
     overlayFields: JSON.parse(updated.overlay_fields || '[]'),
     excludedRows: JSON.parse(updated.excluded_rows || '[]'),
+    nameOverrides: JSON.parse(updated.name_overrides || '{}'),
     status: updated.status,
     createdAt: updated.created_at,
     updatedAt: updated.updated_at,
@@ -215,7 +230,9 @@ batchRouter.post('/:id/validate', authMiddleware, (req: Request, res: Response) 
   const excludedToUse = excludedRows || JSON.parse(batchRow.excluded_rows || '[]');
 
   const { rows } = SpreadsheetService.getAllRows(spreadsheet, batchRow.active_sheet || spreadsheet.activeSheet);
-  const validationSummary = ValidationService.validateRows(rows, mappingsToUse, excludedToUse);
+  const validationSummary = ValidationService.validateRows(rows, mappingsToUse, excludedToUse, {
+    globalProgramName: batchRow.program_name
+  });
 
   // Update batch mappings and excluded rows
   db.prepare(`
@@ -261,14 +278,21 @@ batchRouter.post('/:id/sample-preview', authMiddleware, async (req: Request, res
     return;
   }
 
-  const { rowIndex = 2, overlayFields, fieldMappings } = req.body || {};
+  const { rowIndex = 2, overlayFields, fieldMappings, programName } = req.body || {};
   const fieldsToUse: OverlayField[] = overlayFields || JSON.parse(batchRow.overlay_fields || '[]');
   const mappingsToUse: FieldMapping[] = fieldMappings || JSON.parse(batchRow.field_mappings || '[]');
+  const programNameToUse = programName !== undefined ? (programName || '').trim() : (batchRow.program_name || '').trim();
 
   const { rows } = SpreadsheetService.getAllRows(spreadsheet, batchRow.active_sheet || spreadsheet.activeSheet);
   // Default to first valid row or specific rowIndex (1-indexed source row, data begins at row 2)
   const targetDataIndex = Math.max(0, Math.min(rowIndex - 2, rows.length - 1));
-  const rowData = rows[targetDataIndex] || {};
+  const rowData = { ...(rows[targetDataIndex] || {}) };
+  const nameOverrides = JSON.parse(batchRow.name_overrides || '{}');
+  const nameMapping = mappingsToUse.find((m) => m.fieldKey === 'STUDENT_NAME');
+  const nameCol = nameMapping?.spreadsheetColumn || 'Student Name';
+  if (nameOverrides[rowIndex] && nameCol) {
+    rowData[nameCol] = nameOverrides[rowIndex];
+  }
 
   try {
     const result = await PdfGenerationService.generateSingleCertificate({
@@ -276,7 +300,8 @@ batchRouter.post('/:id/sample-preview', authMiddleware, async (req: Request, res
       selectedPage: batchRow.selected_page || 1,
       rowData,
       fieldMappings: mappingsToUse,
-      overlayFields: fieldsToUse
+      overlayFields: fieldsToUse,
+      globalProgramName: programNameToUse
     });
 
     // Save sample to disk
@@ -332,6 +357,7 @@ batchRouter.post('/:id/start-job', authMiddleware, async (req: Request, res: Res
     id: batchRow.id,
     userId: batchRow.user_id,
     name: batchRow.name,
+    programName: batchRow.program_name || '',
     templateId: batchRow.template_id,
     spreadsheetId: batchRow.spreadsheet_id,
     activeSheet: batchRow.active_sheet,
@@ -339,6 +365,7 @@ batchRouter.post('/:id/start-job', authMiddleware, async (req: Request, res: Res
     fieldMappings: JSON.parse(batchRow.field_mappings || '[]'),
     overlayFields: JSON.parse(batchRow.overlay_fields || '[]'),
     excludedRows: JSON.parse(batchRow.excluded_rows || '[]'),
+    nameOverrides: JSON.parse(batchRow.name_overrides || '{}'),
     status: batchRow.status,
     createdAt: batchRow.created_at,
     updatedAt: batchRow.updated_at,
@@ -509,4 +536,17 @@ batchRouter.get('/:id/download/failures-csv', authMiddleware, (req: Request, res
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="failures_${safeBatchName}.csv"`);
   fs.createReadStream(csvPath).pipe(res);
+});
+
+// Upload generated artifacts to Google Drive
+batchRouter.post('/:id/upload-drive', authMiddleware, async (req: Request, res: Response) => {
+  const batchId = req.params.id as string;
+  const { target = 'all' } = req.body || {};
+  try {
+    const result = await GoogleDriveService.uploadBatchArtifacts(batchId, req.user!.id, target);
+    res.json(result);
+  } catch (err: any) {
+    const status = err.statusCode || 400;
+    res.status(status).json({ error: err.message || 'Google Drive upload failed.' });
+  }
 });

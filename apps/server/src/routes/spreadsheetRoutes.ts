@@ -72,3 +72,15 @@ spreadsheetRouter.post('/:id/sheet', authMiddleware, (req: Request, res: Respons
     res.status(400).json({ error: err.message || 'Failed to switch sheet.' });
   }
 });
+
+spreadsheetRouter.get('/:id/rows', authMiddleware, (req: Request, res: Response) => {
+  const spreadsheet = SpreadsheetService.getSpreadsheet(req.params.id as string, req.user!.id);
+  if (!spreadsheet) {
+    res.status(404).json({ error: 'Spreadsheet not found.' });
+    return;
+  }
+  const sheetName = (req.query.sheet as string) || spreadsheet.activeSheet;
+  const { headers, rows } = SpreadsheetService.getAllRows(spreadsheet, sheetName);
+  res.json({ headers, rows, totalRows: rows.length });
+});
+
