@@ -1,0 +1,10 @@
+.git
+node_modules
+apps/server/node_modules
+apps/web/node_modules
+packages/shared/node_modules
+apps/server/storage
+storage
+.env
+*.log
+.DS_Store

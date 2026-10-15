@@ -1,6 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import path from 'node:path';
+import fs from 'node:fs';
 import { config } from './config';
 import { seedAdminUser } from './db/seed';
 import { csrfMiddleware } from './middleware/csrf';
@@ -79,6 +81,29 @@ app.use('/api/batches', batchRouter);
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
+
+// Serve frontend build in production
+const webDistCandidates = [
+  path.resolve(__dirname, '../../web/dist'),
+  path.resolve(__dirname, '../web/dist'),
+  path.resolve(process.cwd(), 'apps/web/dist')
+];
+
+let webDistDir = '';
+for (const candidate of webDistCandidates) {
+  if (fs.existsSync(candidate) && fs.existsSync(path.join(candidate, 'index.html'))) {
+    webDistDir = candidate;
+    break;
+  }
+}
+
+if (webDistDir) {
+  app.use(express.static(webDistDir));
+  app.get('*', (req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(webDistDir, 'index.html'));
+  });
+}
 
 // Global error handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

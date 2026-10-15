@@ -5,6 +5,10 @@ import dotenv from 'dotenv';
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 dotenv.config();
 
+const storageBase = process.env.STORAGE_DIR 
+  ? path.resolve(process.env.STORAGE_DIR)
+  : path.resolve(__dirname, '../storage');
+
 export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -16,7 +20,7 @@ export const config = {
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   googleRedirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:4000/api/auth/google/callback',
-  dbPath: path.resolve(__dirname, '../storage/db/app.sqlite'),
-  uploadDir: path.resolve(__dirname, '../storage/temp/uploads'),
-  jobsDir: path.resolve(__dirname, '../storage/temp/jobs')
+  dbPath: path.join(storageBase, 'db/app.sqlite'),
+  uploadDir: path.join(storageBase, 'temp/uploads'),
+  jobsDir: path.join(storageBase, 'temp/jobs')
 };
